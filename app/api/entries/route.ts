@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createEntry, listEntries, deleteEntry } from '@/lib/daemon';
 
-export async function GET() {
-  const entries = await listEntries();
+export async function GET(req: NextRequest) {
+  const groupId = req.nextUrl.searchParams.get('groupId');
+  if (!groupId) return NextResponse.json({ error: 'groupId required' }, { status: 400 });
+  const entries = await listEntries(groupId);
   return NextResponse.json(entries);
 }
 
 export async function POST(req: NextRequest) {
-  const { party, title, description } = await req.json();
-  if (!party || !title) {
-    return NextResponse.json({ error: 'party and title required' }, { status: 400 });
+  const { groupId, party, title, description } = await req.json();
+  if (!groupId || !party || !title) {
+    return NextResponse.json({ error: 'groupId, party, and title required' }, { status: 400 });
   }
-  const entry = await createEntry(party, title, description || '');
+  const entry = await createEntry(groupId, party, title, description || '');
   return NextResponse.json(entry);
 }
 

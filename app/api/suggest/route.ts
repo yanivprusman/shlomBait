@@ -1,11 +1,14 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { listEntries } from '@/lib/daemon';
 
 const client = new Anthropic();
 
-export async function POST() {
-  const entries = await listEntries();
+export async function POST(req: NextRequest) {
+  const { groupId } = await req.json();
+  if (!groupId) return NextResponse.json({ error: 'groupId required' }, { status: 400 });
+
+  const entries = await listEntries(groupId);
   if (entries.length === 0) {
     return NextResponse.json({ suggestion: 'No entries yet. Both parties need to submit their feelings first.' });
   }
