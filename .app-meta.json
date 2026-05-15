@@ -1,0 +1,4 @@
+{
+  "description": "Async family conflict resolution - each side logs feelings privately, shared view with Claude-powered mitigation suggestions",
+  "icon": "HeartHandshake"
+}
