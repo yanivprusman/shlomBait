@@ -9,7 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@addnewfeature/feedback-lib-launcher": "file:../../automateLinux/packages/feedback-lib-launcher",
     "@anthropic-ai/sdk": "^0.96.0",
+    "@claudecontrol/feedback-lib": "file:../../automateLinux/packages/feedback-lib",
     "next": "16.2.6",
     "next-auth": "^5.0.0-beta.31",
     "react": "19.2.4",

@@ -1,4 +1,5 @@
 import type { FeedbackBackend } from '@automate/feedback-lib';
+import { BackendAuthExpiredError, BackendSessionExpiredError } from '@automate/feedback-lib';
 
 async function jsonPost(url: string, body: unknown) {
   const res = await fetch(url, {
@@ -6,6 +7,12 @@ async function jsonPost(url: string, body: unknown) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (data.error === 'auth_expired') throw new BackendAuthExpiredError(data.message);
+    if (data.error === 'session_expired') throw new BackendSessionExpiredError(data.message);
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
   return res.json();
 }
 
