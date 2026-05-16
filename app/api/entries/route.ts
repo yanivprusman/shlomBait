@@ -9,11 +9,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const { groupId, party, title, description } = await req.json();
+  const { groupId, party, title, description, category } = await req.json();
   if (!groupId || !party || !title) {
     return NextResponse.json({ error: 'groupId, party, and title required' }, { status: 400 });
   }
-  const entry = await createEntry(groupId, party, title, description || '');
+  const entry = await createEntry(groupId, party, title, description || '', category || 'context');
   return NextResponse.json(entry);
 }
 

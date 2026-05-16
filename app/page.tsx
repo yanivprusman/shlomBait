@@ -18,12 +18,15 @@ interface Group {
   createdAt: string;
 }
 
+type EntryCategory = 'context' | 'idea' | 'concern' | 'decision';
+
 interface Entry {
   issueNumber: number;
   party: string;
   groupId: string;
   title: string;
   description: string;
+  category: EntryCategory;
   createdAt: string;
   status: string;
 }
@@ -32,11 +35,23 @@ interface Draft {
   id: string;
   title: string;
   description: string;
+  category: EntryCategory;
   createdAt: string;
 }
 
+interface ReadinessState {
+  [email: string]: boolean;
+}
+
 type View = 'groups' | 'group';
-type Tab = 'private' | 'shared';
+type Tab = 'surface' | 'shared' | 'synthesize';
+
+const CATEGORY_META: Record<EntryCategory, { label: string; color: string; bgColor: string; description: string }> = {
+  context: { label: 'Context', color: 'text-blue-700', bgColor: 'bg-blue-50 border-blue-200', description: 'Facts, observations, information the other side may not have' },
+  idea: { label: 'Idea', color: 'text-violet-700', bgColor: 'bg-violet-50 border-violet-200', description: 'Proposals, possibilities, things worth considering' },
+  concern: { label: 'Concern', color: 'text-amber-700', bgColor: 'bg-amber-50 border-amber-200', description: 'Worries, risks, things that feel unresolved' },
+  decision: { label: 'Decision Needed', color: 'text-rose-700', bgColor: 'bg-rose-50 border-rose-200', description: 'Something that requires a joint decision' },
+};
 
 // --- Google Sign-In ---
 
@@ -98,6 +113,16 @@ function saveDrafts(email: string, groupId: string, drafts: Draft[]) {
   localStorage.setItem(`shlomBait_drafts_${email}_${groupId}`, JSON.stringify(drafts));
 }
 
+function getReadiness(groupId: string): ReadinessState {
+  if (typeof window === 'undefined') return {};
+  const raw = localStorage.getItem(`shlomBait_readiness_${groupId}`);
+  return raw ? JSON.parse(raw) : {};
+}
+
+function saveReadiness(groupId: string, state: ReadinessState) {
+  localStorage.setItem(`shlomBait_readiness_${groupId}`, JSON.stringify(state));
+}
+
 // --- App ---
 
 export default function Home() {
@@ -105,13 +130,14 @@ export default function Home() {
   const [view, setView] = useState<View>('groups');
   const [groups, setGroups] = useState<Group[]>([]);
   const [activeGroup, setActiveGroup] = useState<Group | null>(null);
-  const [tab, setTab] = useState<Tab>('private');
+  const [tab, setTab] = useState<Tab>('surface');
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [suggestion, setSuggestion] = useState('');
-  const [suggesting, setSuggesting] = useState(false);
+  const [newCategory, setNewCategory] = useState<EntryCategory>('context');
+  const [synthesis, setSynthesis] = useState('');
+  const [synthesizing, setSynthesizing] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
@@ -120,6 +146,7 @@ export default function Home() {
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
   const [joinError, setJoinError] = useState('');
+  const [readiness, setReadiness] = useState<ReadinessState>({});
   const buttonRef = useRef<HTMLDivElement>(null);
   const callbackRef = useRef<(response: { credential: string }) => void>(undefined);
 
@@ -209,9 +236,10 @@ export default function Home() {
   const enterGroup = (group: Group) => {
     setActiveGroup(group);
     setView('group');
-    setTab('private');
+    setTab('surface');
     setDrafts(getDrafts(user!.email, group.id));
-    setSuggestion('');
+    setSynthesis('');
+    setReadiness(getReadiness(group.id));
   };
 
   // --- Entries ---
@@ -230,6 +258,7 @@ export default function Home() {
       id: Date.now().toString(),
       title: newTitle.trim(),
       description: newDesc.trim(),
+      category: newCategory,
       createdAt: new Date().toISOString(),
     };
     const updated = [draft, ...drafts];
@@ -252,10 +281,20 @@ export default function Home() {
     const res = await fetch('/api/entries', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groupId: activeGroup.id, party: user.name, title: draft.title, description: draft.description }),
+      body: JSON.stringify({
+        groupId: activeGroup.id,
+        party: user.name,
+        title: draft.title,
+        description: draft.description,
+        category: draft.category,
+      }),
     });
     if (res.ok) {
       deleteDraft(draft.id);
+      // When submitting new entries, mark self as not ready (context changed)
+      const updated = { ...readiness, [user.email]: false };
+      setReadiness(updated);
+      saveReadiness(activeGroup.id, updated);
       await fetchEntries();
     }
     setSubmitting(null);
@@ -267,10 +306,21 @@ export default function Home() {
     }
   };
 
-  const requestSuggestion = async () => {
+  const toggleReadiness = () => {
+    if (!user || !activeGroup) return;
+    const updated = { ...readiness, [user.email]: !readiness[user.email] };
+    setReadiness(updated);
+    saveReadiness(activeGroup.id, updated);
+  };
+
+  const allReady = activeGroup
+    ? activeGroup.members.length >= 2 && activeGroup.members.every(m => readiness[m.email])
+    : false;
+
+  const requestSynthesis = async () => {
     if (!activeGroup) return;
-    setSuggesting(true);
-    setSuggestion('');
+    setSynthesizing(true);
+    setSynthesis('');
     const res = await fetch('/api/suggest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -278,9 +328,9 @@ export default function Home() {
     });
     if (res.ok) {
       const data = await res.json();
-      setSuggestion(data.suggestion);
+      setSynthesis(data.suggestion);
     }
-    setSuggesting(false);
+    setSynthesizing(false);
   };
 
   const signOut = () => {
@@ -300,7 +350,7 @@ export default function Home() {
       <div className="min-h-screen flex items-center justify-center bg-stone-50">
         <div className="text-center space-y-8">
           <h1 className="text-3xl font-light text-stone-800">shlomBait</h1>
-          <p className="text-stone-500 text-sm">Family conflict resolution</p>
+          <p className="text-stone-500 text-sm max-w-xs mx-auto">Surface full context before forming conclusions. Better information flow, better decisions together.</p>
           {authLoading ? (
             <p className="text-sm text-stone-400">Signing in...</p>
           ) : (
@@ -329,7 +379,7 @@ export default function Home() {
 
         <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-stone-500">My Groups</h2>
+            <h2 className="text-sm font-medium text-stone-500">My Collaborations</h2>
             <div className="flex gap-2">
               <button
                 data-id="show-join-group"
@@ -343,18 +393,17 @@ export default function Home() {
                 onClick={() => { setShowCreate(!showCreate); setShowJoin(false); }}
                 className="text-sm px-3 py-1.5 rounded-lg bg-stone-800 text-white hover:bg-stone-700 cursor-pointer transition-colors"
               >
-                New Group
+                New Collaboration
               </button>
             </div>
           </div>
 
-          {/* Create group form */}
           {showCreate && (
             <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
               <input
                 data-id="new-group-name"
                 type="text"
-                placeholder="Group name (e.g. Me & Dad)"
+                placeholder="Name this collaboration (e.g. Project Alpha with Shlom)"
                 value={newGroupName}
                 onChange={e => setNewGroupName(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleCreateGroup()}
@@ -375,13 +424,12 @@ export default function Home() {
             </div>
           )}
 
-          {/* Join group form */}
           {showJoin && (
             <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
               <input
                 data-id="join-code-input"
                 type="text"
-                placeholder="Paste group code"
+                placeholder="Paste collaboration code"
                 value={joinCode}
                 onChange={e => { setJoinCode(e.target.value); setJoinError(''); }}
                 onKeyDown={e => e.key === 'Enter' && handleJoinGroup()}
@@ -403,11 +451,10 @@ export default function Home() {
             </div>
           )}
 
-          {/* Group list */}
           {groups.length === 0 && !showCreate && !showJoin && (
             <div className="text-center py-16 text-stone-400">
-              <p className="text-lg mb-2">No groups yet</p>
-              <p className="text-sm">Create a group and invite someone to get started</p>
+              <p className="text-lg mb-2">No collaborations yet</p>
+              <p className="text-sm">Create a collaboration and invite your partner to get started</p>
             </div>
           )}
 
@@ -422,7 +469,7 @@ export default function Home() {
                 <div>
                   <p className="text-stone-800 font-medium">{group.name}</p>
                   <p className="text-xs text-stone-400 mt-1">
-                    {group.members.map(m => m.name).join(', ')}
+                    {group.members.map(m => m.name).join(' & ')}
                   </p>
                 </div>
                 <div className="flex -space-x-2">
@@ -448,6 +495,7 @@ export default function Home() {
 
   const myEntries = entries.filter(e => e.party === user.name);
   const partyNames = [...new Set(entries.map(e => e.party))];
+  const iAmReady = readiness[user.email] || false;
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -456,14 +504,14 @@ export default function Home() {
           <div className="flex items-center gap-3">
             <button
               data-id="back-to-groups"
-              onClick={() => { setView('groups'); setActiveGroup(null); setEntries([]); setSuggestion(''); }}
+              onClick={() => { setView('groups'); setActiveGroup(null); setEntries([]); setSynthesis(''); }}
               className="text-stone-400 hover:text-stone-600 cursor-pointer"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
             </button>
             <div>
               <h1 className="text-lg font-medium text-stone-800">{activeGroup!.name}</h1>
-              <p className="text-xs text-stone-400">{activeGroup!.members.map(m => m.name).join(', ')}</p>
+              <p className="text-xs text-stone-400">{activeGroup!.members.map(m => m.name).join(' & ')}</p>
             </div>
           </div>
           <button
@@ -475,32 +523,60 @@ export default function Home() {
           </button>
         </div>
         <div className="max-w-2xl mx-auto px-4 flex gap-6">
-          {(['private', 'shared'] as Tab[]).map(t => (
+          {(['surface', 'shared', 'synthesize'] as Tab[]).map(t => (
             <button
               key={t}
               data-id={`tab-${t}`}
               data-active-tab={tab === t ? t : undefined}
-              onClick={() => { setTab(t); if (t === 'shared') fetchEntries(); }}
+              onClick={() => { setTab(t); if (t === 'shared' || t === 'synthesize') fetchEntries(); }}
               className={`pb-2 text-sm border-b-2 cursor-pointer transition-colors ${
                 tab === t
                   ? 'border-stone-800 text-stone-800'
                   : 'border-transparent text-stone-400 hover:text-stone-600'
               }`}
             >
-              {t === 'private' ? 'My Log' : 'Shared View'}
+              {t === 'surface' ? 'Surface' : t === 'shared' ? 'Full Picture' : 'Synthesize'}
             </button>
           ))}
         </div>
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6">
-        {tab === 'private' ? (
+        {tab === 'surface' ? (
           <div className="space-y-6">
+            {/* Guidance */}
+            <div className="bg-stone-100 rounded-xl p-4 text-sm text-stone-600 space-y-1">
+              <p className="font-medium text-stone-700">Surface everything relevant before concluding.</p>
+              <p>Don&apos;t filter for &quot;importance&quot; yet. Share context, ideas, concerns, and decisions needed. Your collaborator will do the same.</p>
+            </div>
+
+            {/* Category selector */}
+            <div className="flex gap-2 flex-wrap">
+              {(Object.entries(CATEGORY_META) as [EntryCategory, typeof CATEGORY_META[EntryCategory]][]).map(([key, meta]) => (
+                <button
+                  key={key}
+                  data-id={`category-${key}`}
+                  onClick={() => setNewCategory(key)}
+                  className={`text-xs px-3 py-1.5 rounded-full border cursor-pointer transition-colors ${
+                    newCategory === key
+                      ? `${meta.bgColor} ${meta.color} font-medium`
+                      : 'border-stone-200 text-stone-400 hover:text-stone-600'
+                  }`}
+                >
+                  {meta.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Input */}
             <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
+              <div className={`text-xs px-2 py-0.5 rounded inline-block ${CATEGORY_META[newCategory].bgColor} ${CATEGORY_META[newCategory].color}`}>
+                {CATEGORY_META[newCategory].label}
+              </div>
               <input
                 data-id="new-entry-title"
                 type="text"
-                placeholder="What's on your mind?"
+                placeholder={CATEGORY_META[newCategory].description}
                 value={newTitle}
                 onChange={e => setNewTitle(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && !e.shiftKey && addDraft()}
@@ -508,7 +584,7 @@ export default function Home() {
               />
               <textarea
                 data-id="new-entry-desc"
-                placeholder="More details (optional)"
+                placeholder="Add detail, reasoning, or examples (optional)"
                 value={newDesc}
                 onChange={e => setNewDesc(e.target.value)}
                 rows={2}
@@ -521,23 +597,25 @@ export default function Home() {
                   disabled={!newTitle.trim()}
                   className="px-4 py-1.5 rounded-lg bg-stone-800 text-white text-sm hover:bg-stone-700 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
                 >
-                  Save draft
+                  Save to drafts
                 </button>
               </div>
             </div>
 
+            {/* Drafts */}
             {drafts.length > 0 && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-medium text-stone-500">Drafts ({drafts.length})</h2>
+                  <h2 className="text-sm font-medium text-stone-500">Ready to share ({drafts.length})</h2>
                   <button data-id="submit-all" onClick={submitAll} className="text-sm text-stone-500 hover:text-stone-800 cursor-pointer">
-                    Submit all to shared view
+                    Share all
                   </button>
                 </div>
                 {drafts.map(draft => (
-                  <div key={draft.id} className="bg-white rounded-xl border border-stone-200 p-4 flex items-start justify-between gap-3">
+                  <div key={draft.id} className={`rounded-xl border p-4 flex items-start justify-between gap-3 ${CATEGORY_META[draft.category].bgColor}`}>
                     <div className="min-w-0">
-                      <p className="text-stone-800">{draft.title}</p>
+                      <span className={`text-xs font-medium ${CATEGORY_META[draft.category].color}`}>{CATEGORY_META[draft.category].label}</span>
+                      <p className="text-stone-800 mt-1">{draft.title}</p>
                       {draft.description && <p className="text-sm text-stone-500 mt-1">{draft.description}</p>}
                     </div>
                     <div className="flex gap-2 shrink-0">
@@ -545,16 +623,16 @@ export default function Home() {
                         data-id={`submit-draft-${draft.id}`}
                         onClick={() => submitDraft(draft)}
                         disabled={submitting === draft.id}
-                        className="text-xs px-3 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 cursor-pointer transition-colors"
+                        className="text-xs px-3 py-1 rounded-lg bg-white/80 text-stone-700 hover:bg-white disabled:opacity-50 cursor-pointer transition-colors"
                       >
-                        {submitting === draft.id ? '...' : 'Submit'}
+                        {submitting === draft.id ? '...' : 'Share'}
                       </button>
                       <button
                         data-id={`delete-draft-${draft.id}`}
                         onClick={() => deleteDraft(draft.id)}
                         className="text-xs px-2 py-1 rounded-lg text-stone-400 hover:text-red-500 hover:bg-red-50 cursor-pointer transition-colors"
                       >
-                        Delete
+                        Discard
                       </button>
                     </div>
                   </div>
@@ -562,19 +640,45 @@ export default function Home() {
               </div>
             )}
 
+            {/* Already shared by me */}
             {myEntries.length > 0 && (
               <div className="space-y-3">
-                <h2 className="text-sm font-medium text-stone-500">Submitted ({myEntries.length})</h2>
+                <h2 className="text-sm font-medium text-stone-500">Already shared ({myEntries.length})</h2>
                 {myEntries.map(entry => (
                   <div key={entry.issueNumber} className="bg-stone-100 rounded-xl p-4 opacity-60">
-                    <p className="text-stone-600">{entry.title}</p>
+                    <span className="text-xs text-stone-400">{CATEGORY_META[entry.category]?.label || 'Context'}</span>
+                    <p className="text-stone-600 mt-1">{entry.title}</p>
                     {entry.description && <p className="text-sm text-stone-400 mt-1">{entry.description}</p>}
                   </div>
                 ))}
               </div>
             )}
+
+            {/* Readiness signal */}
+            <div className="border-t border-stone-200 pt-6">
+              <button
+                data-id="toggle-readiness"
+                onClick={toggleReadiness}
+                className={`w-full py-3 rounded-xl border-2 cursor-pointer transition-all ${
+                  iAmReady
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                    : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
+                }`}
+              >
+                {iAmReady
+                  ? "I've shared everything relevant (click to undo)"
+                  : "Signal: I've surfaced all my context"}
+              </button>
+              <div className="mt-3 flex gap-2 justify-center">
+                {activeGroup!.members.map(m => (
+                  <span key={m.email} className={`text-xs px-2 py-1 rounded-full ${readiness[m.email] ? 'bg-emerald-100 text-emerald-700' : 'bg-stone-100 text-stone-400'}`}>
+                    {m.name.split(' ')[0]} {readiness[m.email] ? '  ready' : '  surfacing...'}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
-        ) : (
+        ) : tab === 'shared' ? (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium text-stone-500">
@@ -585,16 +689,24 @@ export default function Home() {
               </button>
             </div>
 
-            {partyNames.map(name => {
-              const partyEntries = entries.filter(e => e.party === name);
+            {/* Group by category */}
+            {(Object.keys(CATEGORY_META) as EntryCategory[]).map(cat => {
+              const catEntries = entries.filter(e => (e.category || 'context') === cat);
+              if (catEntries.length === 0) return null;
               return (
-                <div key={name} className="space-y-2">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400">{name}</h3>
-                  {partyEntries.map(entry => (
-                    <div key={entry.issueNumber} className="bg-white rounded-xl border border-stone-200 p-4">
-                      <p className="text-stone-800">{entry.title}</p>
-                      {entry.description && <p className="text-sm text-stone-500 mt-1">{entry.description}</p>}
-                      <p className="text-xs text-stone-300 mt-2">{new Date(entry.createdAt).toLocaleDateString()}</p>
+                <div key={cat} className="space-y-2">
+                  <h3 className={`text-xs font-semibold uppercase tracking-wider ${CATEGORY_META[cat].color}`}>
+                    {CATEGORY_META[cat].label} ({catEntries.length})
+                  </h3>
+                  {catEntries.map(entry => (
+                    <div key={entry.issueNumber} className={`rounded-xl border p-4 ${CATEGORY_META[cat].bgColor}`}>
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="text-stone-800">{entry.title}</p>
+                          {entry.description && <p className="text-sm text-stone-500 mt-1">{entry.description}</p>}
+                        </div>
+                        <span className="text-xs text-stone-400 shrink-0 ml-3">{entry.party.split(' ')[0]}</span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -602,24 +714,70 @@ export default function Home() {
             })}
 
             {entries.length === 0 && (
-              <p className="text-center text-stone-400 py-12">No entries submitted yet</p>
+              <p className="text-center text-stone-400 py-12">No entries shared yet. Use the Surface tab to add context.</p>
             )}
 
-            <div className="border-t border-stone-200 pt-6">
-              <button
-                data-id="suggest-mitigations"
-                onClick={requestSuggestion}
-                disabled={suggesting || entries.length === 0}
-                className="w-full py-3 rounded-xl bg-stone-800 text-white hover:bg-stone-700 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
-              >
-                {suggesting ? 'Thinking...' : 'Suggest Mitigations'}
-              </button>
+            {/* Readiness indicator */}
+            {entries.length > 0 && (
+              <div className="bg-stone-100 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-stone-600">Readiness for synthesis:</span>
+                  <div className="flex gap-2">
+                    {activeGroup!.members.map(m => (
+                      <span key={m.email} className={`text-xs px-2 py-1 rounded-full ${readiness[m.email] ? 'bg-emerald-100 text-emerald-700' : 'bg-stone-200 text-stone-400'}`}>
+                        {m.name.split(' ')[0]} {readiness[m.email] ? 'ready' : 'surfacing'}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                {!allReady && (
+                  <p className="text-xs text-stone-400 mt-2">
+                    Synthesis works best when both collaborators have finished surfacing their full context.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Synthesize tab */
+          <div className="space-y-6">
+            {!allReady && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+                <p className="font-medium">Both sides haven&apos;t signaled readiness yet.</p>
+                <p className="mt-1 text-amber-600">You can still synthesize, but the analysis will be more valuable when both collaborators have surfaced their full context.</p>
+              </div>
+            )}
+
+            {allReady && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-sm text-emerald-800">
+                Both collaborators have signaled readiness. The full picture is available for synthesis.
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <h2 className="text-sm font-medium text-stone-500">What synthesis will do:</h2>
+              <ul className="text-sm text-stone-600 space-y-1.5 list-none">
+                <li>Identify information gaps or asymmetries between perspectives</li>
+                <li>Surface implicit assumptions that may differ</li>
+                <li>Find common ground and shared priorities</li>
+                <li>Propose decisions that optimize for the shared system, not just one side</li>
+                <li>Flag where premature filtering may have occurred</li>
+              </ul>
             </div>
 
-            {suggestion && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-                <h3 className="text-sm font-medium text-amber-800 mb-3">Suggestions</h3>
-                <div className="text-sm text-amber-900 whitespace-pre-wrap leading-relaxed">{suggestion}</div>
+            <button
+              data-id="request-synthesis"
+              onClick={requestSynthesis}
+              disabled={synthesizing || entries.length === 0}
+              className="w-full py-3 rounded-xl bg-stone-800 text-white hover:bg-stone-700 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
+            >
+              {synthesizing ? 'Analyzing...' : entries.length === 0 ? 'No entries to synthesize' : 'Synthesize Full Picture'}
+            </button>
+
+            {synthesis && (
+              <div className="bg-white border border-stone-200 rounded-xl p-5 space-y-3">
+                <h3 className="text-sm font-medium text-stone-700">Synthesis</h3>
+                <div className="text-sm text-stone-700 whitespace-pre-wrap leading-relaxed">{synthesis}</div>
               </div>
             )}
           </div>

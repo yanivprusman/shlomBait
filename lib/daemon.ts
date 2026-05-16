@@ -124,23 +124,26 @@ export async function getUserGroups(email: string): Promise<Group[]> {
 
 const APP_NAME = 'shlomBait';
 
+export type EntryCategory = 'context' | 'idea' | 'concern' | 'decision';
+
 export interface Entry {
   issueNumber: number;
   party: string;
   groupId: string;
   title: string;
   description: string;
+  category: EntryCategory;
   createdAt: string;
   status: string;
 }
 
-export async function createEntry(groupId: string, party: string, title: string, description: string): Promise<Entry> {
+export async function createEntry(groupId: string, party: string, title: string, description: string, category: EntryCategory = 'context'): Promise<Entry> {
   const raw = await sendToDaemon({
     command: 'createIssue',
     app: APP_NAME,
     title,
     description,
-    labels: JSON.stringify([`group:${groupId}`, party]),
+    labels: JSON.stringify([`group:${groupId}`, party, `cat:${category}`]),
   });
   const result = JSON.parse(raw.trim());
   return {
@@ -149,6 +152,7 @@ export async function createEntry(groupId: string, party: string, title: string,
     groupId,
     title,
     description,
+    category,
     createdAt: new Date().toISOString(),
     status: 'open',
   };
@@ -165,13 +169,16 @@ export async function listEntries(groupId: string): Promise<Entry[]> {
     .filter((issue: any) => (issue.labels || []).includes(`group:${groupId}`))
     .map((issue: any) => {
       const labels: string[] = issue.labels || [];
-      const party = labels.find((l: string) => !l.startsWith('group:')) || 'unknown';
+      const party = labels.find((l: string) => !l.startsWith('group:') && !l.startsWith('cat:')) || 'unknown';
+      const catLabel = labels.find((l: string) => l.startsWith('cat:'));
+      const category = (catLabel ? catLabel.replace('cat:', '') : 'context') as EntryCategory;
       return {
         issueNumber: issue.issue_number ?? issue.issueNumber,
         party,
         groupId,
         title: issue.title,
         description: issue.description || '',
+        category,
         createdAt: issue.created_at || issue.createdAt || '',
         status: issue.status || 'open',
       };
