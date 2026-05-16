@@ -18,7 +18,10 @@ async function jsonPost(url: string, body: unknown) {
 
 export const feedbackBackend: FeedbackBackend = {
   sendChatMessage: (req) => jsonPost('/api/feedback', req),
-  submitChatIssues: (issues, context) => jsonPost('/api/feedback/submit', { issues, ...context }),
+  submitChatIssues: async (issues, context) => {
+    const data = await jsonPost('/api/feedback/submit', { issues, ...context });
+    return data.results;
+  },
   getSessionStatus: async (tmuxSession) => {
     const res = await fetch(`/api/feedback/status?session=${tmuxSession}`);
     return res.json();
@@ -34,7 +37,7 @@ export const feedbackBackend: FeedbackBackend = {
     const res = await fetch(url);
     return res.json();
   },
-  issueAction: (body) => jsonPost('/api/feedback/response', body),
+  issueAction: (body) => jsonPost('/api/feedback/issues', body),
   getSessionHistory: async (sessionId, appOverride) => {
     const params = new URLSearchParams({ sessionId });
     if (appOverride) params.set('app', appOverride);
