@@ -147,8 +147,22 @@ export default function Home() {
   const [showJoin, setShowJoin] = useState(false);
   const [joinError, setJoinError] = useState('');
   const [readiness, setReadiness] = useState<ReadinessState>({});
+  const [inviteCopied, setInviteCopied] = useState(false);
   const buttonRef = useRef<HTMLDivElement>(null);
+  const inviteCopiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const callbackRef = useRef<(response: { credential: string }) => void>(undefined);
+
+  const copyInviteCode = useCallback(async () => {
+    if (!activeGroup) return;
+    await navigator.clipboard.writeText(activeGroup.id);
+    setInviteCopied(true);
+    if (inviteCopiedTimer.current) clearTimeout(inviteCopiedTimer.current);
+    inviteCopiedTimer.current = setTimeout(() => setInviteCopied(false), 2000);
+  }, [activeGroup]);
+
+  useEffect(() => () => {
+    if (inviteCopiedTimer.current) clearTimeout(inviteCopiedTimer.current);
+  }, []);
 
   // --- Auth ---
 
@@ -516,10 +530,14 @@ export default function Home() {
           </div>
           <button
             data-id="copy-invite-code"
-            onClick={() => navigator.clipboard.writeText(activeGroup!.id)}
-            className="text-xs px-3 py-1.5 rounded-lg border border-stone-200 text-stone-500 hover:bg-stone-50 cursor-pointer transition-colors"
+            onClick={copyInviteCode}
+            className={`text-xs px-3 py-1.5 rounded-lg border cursor-pointer transition-colors ${
+              inviteCopied
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                : 'border-stone-200 text-stone-500 hover:bg-stone-50'
+            }`}
           >
-            Copy invite code
+            {inviteCopied ? 'Copied ✓' : 'Copy invite code'}
           </button>
         </div>
         <div className="max-w-2xl mx-auto px-4 flex gap-6">
